@@ -1,0 +1,5 @@
+# Optional extras — uncomment what you need.
+# Redis-backed session cache (falls back to in-process cache when absent):
+# redis>=5.0
+# Qdrant vector DB adapter (falls back to the embedded LiteVectorStore):
+# qdrant-client>=1.9
