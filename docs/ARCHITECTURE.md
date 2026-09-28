@@ -106,7 +106,20 @@ rebuilds vectors from relational truth at any time.
   security headers on every response (including 413/429).
 - Uploads are parsed in memory (PIL) — no filesystem writes of user files.
 - Global exception handler never leaks stack traces unless docs mode is on.
-- `synapseos audit` continuously verifies all of the above against a live instance.
+- Input guard (`security/guard.py`) screens every chat input for prompt injection,
+  XSS and SQLi **before** retrieval/generation: monitor mode flags + logs a
+  `SecurityEvent` and records the match in the reasoning trace; strict mode
+  (`SYNAPSE_GUARD_MODE=strict`) rejects with HTTP 400 and a machine-readable
+  `{"blocked": true, "reasons": [...]}` body. Guard telemetry:
+  `GET /admin/security/events|stats`.
+- Admin audit trail (`security/trail.py` + `audit_log` table): append-only record of
+  every privileged action — fact approve/reject, KB rollback/resync, document
+  add/delete, guard blocks, consolidation runs, security-audit runs — each with actor
+  and details (`GET /admin/security/audit-log`).
+- `synapseos audit` continuously verifies all of the above against a live instance;
+  a **light** variant runs in-app (`POST /admin/security/audit`) from the dashboard,
+  skipping limiter-hammering probes so it is always safe to click. It authenticates
+  to itself with a per-process internal token to bypass its own rate limiter.
 
 ## 9. Fine-tuning export path
 
@@ -122,4 +135,24 @@ WHERE i.reward IS NOT NULL;
 High-reward pairs export as SFT examples; (bad answer, correction) pairs export as
 DPO preference pairs — a natural future upgrade path from the online loop to
 periodic LoRA/PEFT fine-tunes while the RAG + feedback wrapper keeps learning
-between trainings.
+between trainings. Live endpoints: `GET /admin/export/{stats,sft,dpo}` (JSON or
+newline-delimited JSONL) and `synapseos export sft|dpo --out FILE --min-reward X`.
+
+## 10. Round-2 learning surfaces
+
+- **Confidence calibration** (`/admin/metrics/calibration`): treats `reward > 0` as the
+  outcome and scores the self-evaluator's stated confidence with the Brier score and
+  expected calibration error over 10 buckets — a reliability diagram the dashboard
+  renders per bucket.
+- **Follow-up suggestions**: after each answer, the engine embeds the turn and mines
+  the top similar past interactions for candidate next questions (score > 0.2, deduped,
+  max 3) — returned as `suggestions` on every chat response.
+- **Semantic search** (`POST /search`): one embedding query scored across documents,
+  chunks, learned facts and (user-scoped or all) memories with optional kind filters.
+- **Memory consolidation** (`learning/consolidator.py`, nightly + on-demand):
+  near-duplicate memories for the same (user, kind) merge above cosine 0.92 keeping
+  the higher-importance copy; importance decays with a 30-day half-life (60 for
+  corrections); memories below 0.25 importance older than 14 days are dropped; users
+  with ≥5 memories get a rolled-up `summary` memory; the query cache is pruned past
+  2000 vectors. Every run records its report in `SystemState.last_consolidation`
+  (`GET /admin/memory/stats`, `POST /admin/memory/consolidate`).

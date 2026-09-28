@@ -43,19 +43,33 @@ def search(req: SearchRequest, db: Session = Depends(get_db),
             })
 
     if "memory" in req.kinds:
-        uid = None
         if req.user_id:
+            # user-scoped view: their memories + global ones
             u = db.query(User).filter(User.ext_id == req.user_id).first()
             uid = u.id if u else -1  # unknown user -> global memories only
-        for mem in engine.long_term.recall(vec, uid, k=req.top_k):
-            results.append({
-                "kind": "memory",
-                "title": f"{mem['scope']} memory ({mem['kind']})",
-                "text": mem["text"],
-                "score": mem.get("score", 0.0),
-                "ref": mem.get("id"),
-                "modality": "text",
-            })
+            for mem in engine.long_term.recall(vec, uid, k=req.top_k):
+                results.append({
+                    "kind": "memory",
+                    "title": f"{mem['scope']} memory ({mem['kind']})",
+                    "text": mem["text"],
+                    "score": mem.get("score", 0.0),
+                    "ref": mem.get("id"),
+                    "modality": "text",
+                })
+        else:
+            # admin/global view: every memory in the store
+            from synapseos.memory.long_term import MEM_COLLECTION
+
+            for h in engine.store.search(MEM_COLLECTION, vec, top_k=req.top_k):
+                m = h["meta"]
+                results.append({
+                    "kind": "memory",
+                    "title": f"{m.get('kind', 'memory')} memory",
+                    "text": m.get("text", ""),
+                    "score": round(h["score"], 4),
+                    "ref": m.get("memory_id"),
+                    "modality": "text",
+                })
 
     results.sort(key=lambda r: -r["score"])
     return {"query": req.text, "results": results[: req.top_k]}

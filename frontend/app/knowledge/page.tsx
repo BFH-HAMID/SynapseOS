@@ -23,6 +23,10 @@ export default function KnowledgePage() {
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [tab, setTab] = useState<"active" | "pending" | "rejected" | "retired">("pending");
+  const [q, setQ] = useState("");
+  const [kinds, setKinds] = useState<string[]>([]);
+  const [results, setResults] = useState<any[] | null>(null);
+  const [searching, setSearching] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -43,6 +47,25 @@ export default function KnowledgePage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  const search = async () => {
+    if (!q.trim()) return;
+    setSearching(true);
+    try {
+      const body: any = { text: q, top_k: 10 };
+      if (kinds.length > 0) body.kinds = kinds;
+      const r = await post("/search", body);
+      setResults(r.results);
+      setErr("");
+    } catch (e: any) {
+      setErr(String(e.message || e));
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const toggleKind = (k: string) =>
+    setKinds((ks) => (ks.includes(k) ? ks.filter((x) => x !== k) : [...ks, k]));
 
   const addDoc = async () => {
     if (!title.trim() || !body.trim()) return;
@@ -126,6 +149,57 @@ export default function KnowledgePage() {
         documents + approved learned facts feed retrieval · every change creates an immutable
         version · roll back any bad “learned” update
       </div>
+      <Panel
+        title="Semantic search — one query across documents, chunks, facts and memories"
+        right={
+          <div className="row" style={{ gap: 6 }}>
+            {["document", "chunk", "fact", "memory"].map((k) => (
+              <button
+                key={k}
+                className={`btn sm ${kinds.includes(k) ? "primary" : "ghost"}`}
+                onClick={() => toggleKind(k)}
+              >
+                {k}
+              </button>
+            ))}
+          </div>
+        }
+      >
+        <div className="row" style={{ alignItems: "flex-end" }}>
+          <div style={{ flex: 1 }}>
+            <input
+              value={q}
+              placeholder="search meaning, not keywords — e.g. “how does the reward model learn?”"
+              onChange={(e) => setQ(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && search()}
+            />
+          </div>
+          <button className="btn primary" onClick={search} disabled={searching || !q.trim()}>
+            {searching ? <Spinner /> : "search ▸"}
+          </button>
+        </div>
+        {results && (
+          <>
+            <hr className="sep" />
+            {results.length === 0 ? (
+              <Empty>no matches</Empty>
+            ) : (
+              results.map((r, i) => (
+                <div key={i} className="src">
+                  <Badge tone={r.kind === "fact" ? "cyan" : r.kind === "memory" ? "purple" : "dim"}>{r.kind}</Badge>
+                  <div style={{ flex: 1 }}>
+                    <div className="small">{r.title}</div>
+                    <div className="mono-s faint">{(r.text || "").slice(0, 160)}…</div>
+                  </div>
+                  <span className="mono-s dim">{r.score?.toFixed(3)}</span>
+                </div>
+              ))
+            )}
+            <div className="small faint mt">{results.length} result(s)</div>
+          </>
+        )}
+      </Panel>
+
       {note && <div className="badge b-cyan mb" style={{ display: "block", padding: 8 }}>{note}</div>}
       {err && <ErrorBox error={err} />}
 

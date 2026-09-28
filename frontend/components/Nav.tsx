@@ -11,12 +11,13 @@ const LINKS = [
   { href: "/knowledge", label: "Knowledge Base", icon: "▣" },
   { href: "/metrics", label: "Learning Metrics", icon: "∿" },
   { href: "/drift", label: "Drift & Anomalies", icon: "◈", badge: "drift" },
+  { href: "/security", label: "Security", icon: "⛨", badge: "guard" },
   { href: "/users", label: "Users & Profiles", icon: "◇" },
 ];
 
 export default function Nav() {
   const path = usePathname();
-  const [counts, setCounts] = useState<{ review?: number; drift?: number }>({});
+  const [counts, setCounts] = useState<{ review?: number; drift?: number; guard?: number }>({});
 
   useEffect(() => {
     let alive = true;
@@ -27,6 +28,7 @@ export default function Nav() {
           setCounts({
             review: overview?.totals?.open_reviews,
             drift: overview?.totals?.drift_events,
+            guard: overview?.totals?.security_events,
           });
       } catch {
         /* backend may be restarting */
@@ -49,7 +51,9 @@ export default function Nav() {
       <nav>
         {LINKS.map((l) => {
           const active = l.href === "/" ? path === "/" : path.startsWith(l.href);
-          const n = l.badge === "review" ? counts.review : l.badge === "drift" ? counts.drift : null;
+          const n = l.badge === "review" ? counts.review
+            : l.badge === "drift" ? counts.drift
+            : l.badge === "guard" ? counts.guard : null;
           return (
             <Link key={l.href} href={l.href} className={`nav-link ${active ? "active" : ""}`}>
               <span style={{ opacity: 0.7 }}>{l.icon}</span> {l.label}

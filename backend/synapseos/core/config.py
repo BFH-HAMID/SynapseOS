@@ -5,8 +5,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]  # backend/synapseos/core/config.py -> repo root
-BACKEND_ROOT = REPO_ROOT / "backend"
+BACKEND_ROOT = Path(__file__).resolve().parents[2]  # backend/synapseos/core/config.py -> backend/
+REPO_ROOT = BACKEND_ROOT.parent  # repository root
 
 
 def _env(key: str, default: str | None = None) -> str | None:

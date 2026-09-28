@@ -19,6 +19,10 @@ type Msg = {
   topic?: string;
   reward?: number | null;
   attachments?: { name: string; kind: string; desc?: string }[];
+  suggestions?: string[];
+  blocked?: boolean;
+  blockReasons?: string[];
+  guardFlagged?: boolean;
 };
 
 const USERS = ["alice", "bob", "carol"];
@@ -76,10 +80,32 @@ export default function ChatPage() {
           trace: res.explanation?.trace,
           model: res.model,
           topic: res.topic,
+          suggestions: res.suggestions,
+          guardFlagged: res.explanation?.trace?.some(
+            (s: TraceStep) => s.step === "input_guard" && s.detail?.flagged,
+          ),
         },
       ]);
     } catch (e: any) {
-      setMsgs((m) => [...m, { role: "assistant", content: `⚠ error: ${e.message}` }]);
+      // input guard (strict mode) blocks injections with 400 + detail.reasons
+      let blocked = false;
+      let reasons: string[] = [];
+      const em = String(e.message || "");
+      if (em.startsWith("400:")) {
+        try {
+          const d = JSON.parse(em.slice(4))?.detail;
+          if (d?.blocked) {
+            blocked = true;
+            reasons = d.reasons || [];
+          }
+        } catch { /* not a guard block */ }
+      }
+      setMsgs((m) => [
+        ...m,
+        blocked
+          ? { role: "assistant", content: "⛔ blocked by the input guard (strict mode).", blocked: true, blockReasons: reasons }
+          : { role: "assistant", content: `⚠ error: ${e.message}` },
+      ]);
     } finally {
       setText("");
       setAttachment(null);
@@ -155,6 +181,13 @@ export default function ChatPage() {
                   <div key={i} className="badge b-purple" style={{ marginBottom: 6 }}>📎 {a.kind}: {a.name}</div>
                 ))}
                 {m.content}
+                {m.blocked && m.blockReasons && m.blockReasons.length > 0 && (
+                  <div className="mt">
+                    {m.blockReasons.map((r, i) => (
+                      <div key={i} className="mono-s faint">· {r}</div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {m.role === "assistant" && m.interactionId && (
@@ -187,6 +220,7 @@ export default function ChatPage() {
                     </button>
                     <Confidence value={m.confidence ?? 0} />
                     {m.flagged && <Badge tone="yellow">⚑ flagged for review</Badge>}
+                    {m.guardFlagged && !m.blocked && <Badge tone="yellow">⛨ guard: flagged (monitor)</Badge>}
                     {m.reward != null && (
                       <Badge tone={m.reward >= 0 ? "green" : "red"}>reward {m.reward.toFixed(2)}</Badge>
                     )}
@@ -194,6 +228,22 @@ export default function ChatPage() {
                       {openExplain === idx ? "hide why ▴" : "why? ▾"}
                     </button>
                   </div>
+
+                  {m.suggestions && m.suggestions.length > 0 && (
+                    <div className="row" style={{ gap: 6, flexWrap: "wrap", marginTop: 4 }}>
+                      <span className="small faint">next:</span>
+                      {m.suggestions.map((s, i) => (
+                        <button
+                          key={i}
+                          className="btn sm ghost"
+                          title="ask this follow-up"
+                          onClick={() => { setText(s); }}
+                        >
+                          {s}
+                        </button>
+                      ))}
+                    </div>
+                  )}
 
                   {correctionFor === m.interactionId && (
                     <div className="explain">

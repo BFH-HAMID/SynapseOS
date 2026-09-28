@@ -64,6 +64,21 @@ next answer better, *without retraining*.
 | Versioned knowledge base | immutable KB snapshots on every change; one-click rollback of bad learned updates |
 | Security-audit mode | `synapseos audit` — pentest battery against a running instance (Parrot OS / Kali friendly) |
 
+**Round 2 — safety, tuning & operations**
+
+| Feature | Implementation |
+|---|---|
+| Input guard | prompt-injection / XSS / SQLi / abuse detection on every chat input. `monitor` (flag + log, default) or `strict` (block with HTTP 400 + reasons) via `SYNAPSE_GUARD_MODE` |
+| Guard telemetry | `SecurityEvent` log + `/api/v1/admin/security/{events,stats}`; guard step visible in every answer's reasoning trace |
+| Admin audit trail | append-only `AuditLog` — every privileged action (fact approve/reject, KB rollback, doc add/delete, guard blocks, audit runs, consolidations) with actor + details |
+| In-app security audit | one-click light audit from the dashboard (`POST /api/v1/admin/security/audit`) — full battery stays in the CLI |
+| Fine-tuning export | high-reward answers → SFT dataset; every correction → DPO preference pair; JSON/JSONL via API (`/admin/export/{sft,dpo}`) or CLI |
+| Confidence calibration | Brier score + expected calibration error + 10-bucket reliability diagram (`/admin/metrics/calibration`) — checks whether stated confidence matches real feedback |
+| Semantic search | `POST /api/v1/search` — one embedding query across documents, chunks, facts and memories with kind filters |
+| Follow-up suggestions | every chat answer proposes up to 3 follow-up questions mined from similar past interactions |
+| Memory consolidation | near-duplicate memories merged (cosine > 0.92), importance decay (30/60-day half-life), stale-memory pruning, per-user roll-up summaries; nightly + on-demand |
+| Dashboard security page | guard events, audit trail, guard-mode banner and the in-app audit runner |
+
 ## Quickstart (no API keys, no external services)
 
 ```bash
@@ -165,10 +180,15 @@ synapseos feedback 42 --kind correction --text "the threshold is 0.45"
 synapseos ingest docs/*.md               # bulk ingest
 synapseos facts list/approve/reject/propose
 synapseos kb versions / rollback --version 3 / resync
-synapseos stats                          # system summary
+synapseos stats                          # system summary (incl. guard events)
 synapseos users [alice]                  # profiles + memories
 synapseos audit                          # security audit of a running instance
 synapseos seed [--reset]                 # demo data
+synapseos search "how does drift work?"  # semantic search across the KB
+synapseos export sft --out sft.jsonl     # fine-tuning datasets (sft | dpo)
+synapseos export dpo --min-reward 0.5
+synapseos memory stats                   # memory store + last consolidation
+synapseos memory consolidate             # dedupe / decay / summarize now
 ```
 
 ### Security-audit mode
@@ -188,11 +208,21 @@ $ synapseos audit
  ...
 ```
 
+### Input guard
+
+Every chat input passes a pattern-based guard for prompt injection, XSS and SQLi before it
+reaches the engine. In **monitor** mode (default) suspicious inputs are flagged in the trace,
+logged as `SecurityEvent` and shown on the Security page — the answer still proceeds. In
+**strict** mode they are rejected with HTTP 400 `{"blocked": true, "reasons": [...]}` and the
+block is recorded in the admin audit trail. Set `SYNAPSE_GUARD_MODE=strict` on any instance
+exposed to untrusted users.
+
 ## Configuration
 
 All settings are environment variables (see [.env.example](.env.example)): storage (SQLite /
 Postgres), vector backend (lite / Qdrant), Redis, model provider, embeddings, API keys, CORS,
-rate limits, body size, docs on/off, review thresholds, drift thresholds.
+rate limits, body size, docs on/off, review thresholds, drift thresholds, input-guard mode
+(`SYNAPSE_GUARD_MODE`), public URL (`SYNAPSE_PUBLIC_URL`).
 
 ## Repository layout
 

@@ -172,6 +172,15 @@ def seed(engine: SynapseEngine, settings: Settings, reset: bool = False) -> dict
             engine.chat("mallory", "seed-guard", probe)
         print("  guard events: 3 (monitor mode)")
 
+        # consolidation demo: bob submits the same correction twice —
+        # near-duplicate memories (cosine > 0.92, same user + kind) merge into one
+        for q in ("what is the review confidence threshold?",
+                  "when do answers get flagged for review?"):
+            r = engine.chat("bob", "seed-consolidate", q)
+            engine.feedback(r["interaction_id"], "correction", None,
+                            "Answers below a confidence of 0.45 are flagged for human review")
+        print("  consolidation demo: 2 near-identical corrections from bob")
+
         # one memory consolidation pass (dedupe/decay/summarize)
         report = engine.consolidator.consolidate(db, actor="seed")
         print(f"  consolidation: deduped={report['deduped']} summaries={report['summaries']}")

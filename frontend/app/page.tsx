@@ -74,6 +74,9 @@ export default function OverviewPage() {
         <Stat num={t.facts_active} lbl="Learned facts live" sub={`${t.facts_pending} pending`} color="var(--cyan)" />
         <Stat num={t.users} lbl="Users" sub="personalized profiles" />
         <Stat num={`${data.averages.latency_ms?.toFixed(0)}ms`} lbl="Avg latency" sub={`${t.flagged} flagged low-confidence`} />
+        <Stat num={t.security_events ?? 0} lbl="Guard events" sub={`guard ${cfg?.guard_mode ?? "off"} mode`} color={t.security_events ? "var(--yellow)" : undefined} />
+        <Stat num={`${t.documents + t.facts_active}`} lbl="KB items" sub={`${t.documents} docs · ${t.facts_active} facts`} />
+        <Stat num={t.feedback} lbl="Feedback signal" sub={`${t.users} personalized users`} />
       </div>
 
       <Panel title="Learning curve — reward over time" right={<Link className="small" href="/metrics">details →</Link>}>
@@ -158,10 +161,13 @@ export default function OverviewPage() {
             <div className="small dim">admin key: {cfg?.admin_auth_enabled ? "on" : "off"}</div>
             <div className="small dim">docs: {cfg?.docs_enabled ? "on" : "off"}</div>
             <div className="small dim">rate limit: {cfg?.rate_limit?.capacity}/burst</div>
+            <div className="small dim">input guard: {cfg?.guard_mode ?? "off"}</div>
           </div>
           <div>
             <div className="lbl small faint">SECURITY AUDIT</div>
-            <div className="small dim">run from a terminal:</div>
+            <div className="small dim">in-app light audit:</div>
+            <Link className="small" href="/security">security page →</Link>
+            <div className="small dim mt">full battery from a terminal:</div>
             <code className="small">synapseos audit</code>
             <div className="small faint mt">Parrot/Kali-friendly pentest of this instance</div>
           </div>

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { get } from "@/lib/api";
-import { Empty, ErrorBox, Panel, Spinner } from "@/components/ui";
+import { Empty, ErrorBox, Panel, Spinner, Stat } from "@/components/ui";
 import { BarRow, LineChart } from "@/components/charts";
 import { Badge } from "@/components/ui";
 
@@ -12,19 +12,26 @@ export default function MetricsPage() {
   const [curve, setCurve] = useState<CurvePoint[]>([]);
   const [fb, setFb] = useState<any>(null);
   const [topics, setTopics] = useState<any[]>([]);
+  const [cal, setCal] = useState<any>(null);
+  const [exp, setExp] = useState<any>(null);
+  const [minReward, setMinReward] = useState(0.5);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     try {
-      const [c, f, t] = await Promise.all([
+      const [c, f, t, ca, ex] = await Promise.all([
         get("/admin/metrics/learning-curve?days=60"),
         get("/admin/metrics/feedback?days=60"),
         get("/admin/metrics/topics"),
+        get("/admin/metrics/calibration"),
+        get("/admin/export/stats"),
       ]);
       setCurve(c.series);
       setFb(f);
       setTopics(t.topics);
+      setCal(ca);
+      setExp(ex);
       setErr("");
     } catch (e: any) {
       setErr(String(e.message || e));
@@ -139,6 +146,86 @@ export default function MetricsPage() {
           )}
         </Panel>
       </div>
+      <div className="grid grid-2">
+        <Panel title="Confidence calibration — does stated confidence match reality?">
+          {cal && cal.n > 0 ? (
+            <>
+              <div className="row mb" style={{ gap: 8 }}>
+                <Badge tone={cal.brier <= 0.25 ? "green" : "yellow"}>Brier {cal.brier?.toFixed(3)}</Badge>
+                <Badge tone={cal.ece <= 0.1 ? "green" : "yellow"}>ECE {cal.ece?.toFixed(3)}</Badge>
+                <Badge tone="dim">n = {cal.n} rewarded interactions</Badge>
+              </div>
+              <div className="small dim mb">
+                Each bar compares the self-evaluator&apos;s average stated confidence against the
+                share of answers users actually rewarded (1 bucket = 0.1 confidence). Perfectly
+                calibrated systems have Brier → 0 and ECE → 0.
+              </div>
+              {cal.buckets.filter((b: any) => b.n > 0).map((b: any) => (
+                <div key={b.bucket} className="mb">
+                  <div className="row spread small">
+                    <span className="mono-s dim">{b.bucket}</span>
+                    <span className="faint">n={b.n}</span>
+                  </div>
+                  <BarRow label="stated" value={b.avg_confidence} max={1} color="var(--cyan)" />
+                  <BarRow
+                    label="actual"
+                    value={b.actual_accuracy ?? 0}
+                    max={1}
+                    color={(b.actual_accuracy ?? 0) >= b.avg_confidence ? "var(--green)" : "var(--red)"}
+                  />
+                </div>
+              ))}
+              {cal.buckets.every((b: any) => b.n === 0) && <Empty>no rewarded interactions yet</Empty>}
+            </>
+          ) : (
+            <Empty>calibration needs feedback — reward some answers in chat first</Empty>
+          )}
+        </Panel>
+
+        <Panel title="Fine-tuning export — turn feedback into training data">
+          {exp && (
+            <>
+              <div className="grid grid-3 mb">
+                <Stat num={exp.sft_positive_rows} lbl="SFT rows" sub={`reward ≥ ${minReward}`} color="var(--cyan)" />
+                <Stat num={exp.dpo_preference_pairs} lbl="DPO pairs" sub="from corrections" color="var(--purple)" />
+                <Stat num={exp.negative_rows} lbl="Negative rows" sub="thumbs-down" color="var(--red)" />
+              </div>
+              <div className="small dim mb">
+                High-reward answers become supervised fine-tuning examples; every correction becomes a
+                preference pair (chosen = the user&apos;s correction, rejected = the original answer).
+                Export as JSONL for direct use with HF TRL / Axolotl.
+              </div>
+              <div className="row" style={{ gap: 8, alignItems: "center" }}>
+                <label className="small dim">min reward</label>
+                <input
+                  style={{ width: 70, padding: "3px 6px" }}
+                  type="number" step="0.1" min="0" max="1" value={minReward}
+                  onChange={(e) => setMinReward(Number(e.target.value))}
+                />
+                <span style={{ flex: 1 }} />
+                <a
+                  className="btn sm"
+                  href={`/backend-api/admin/export/sft?format=jsonl&min_reward=${minReward}`}
+                  download="synapseos-sft.jsonl"
+                >
+                  ⬇ SFT .jsonl
+                </a>
+                <a
+                  className="btn sm"
+                  href={`/backend-api/admin/export/dpo?format=jsonl`}
+                  download="synapseos-dpo.jsonl"
+                >
+                  ⬇ DPO .jsonl
+                </a>
+                <a className="btn sm ghost" href={`/backend-api/admin/export/sft?format=json&min_reward=${minReward}`} target="_blank">
+                  preview json ↗
+                </a>
+              </div>
+            </>
+          )}
+        </Panel>
+      </div>
+
     </>
   );
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { get } from "@/lib/api";
+import { get, post, timeAgo } from "@/lib/api";
 import { Badge, Empty, ErrorBox, Panel, Spinner } from "@/components/ui";
 
 type User = {
@@ -20,16 +20,36 @@ export default function UsersPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [detail, setDetail] = useState<any>(null);
+  const [memStats, setMemStats] = useState<any>(null);
+  const [consolidating, setConsolidating] = useState(false);
+  const [consReport, setConsReport] = useState<any>(null);
   const [err, setErr] = useState("");
 
   const load = useCallback(async () => {
     try {
-      setUsers(await get("/users"));
+      const [u, m] = await Promise.all([
+        get("/users"),
+        get("/admin/memory/stats").catch(() => null),
+      ]);
+      setUsers(u);
+      setMemStats(m);
       setErr("");
     } catch (e: any) {
       setErr(String(e.message || e));
     }
   }, []);
+
+  const consolidate = async () => {
+    setConsolidating(true);
+    try {
+      setConsReport(await post("/admin/memory/consolidate"));
+      load();
+    } catch (e: any) {
+      setErr(String(e.message || e));
+    } finally {
+      setConsolidating(false);
+    }
+  };
 
   useEffect(() => {
     load();
@@ -138,6 +158,49 @@ export default function UsersPage() {
           )}
         </Panel>
       )}
+      <Panel
+        title="Memory consolidation — dedupe, decay, summarize"
+        right={
+          <button className="btn primary sm" onClick={consolidate} disabled={consolidating}>
+            {consolidating ? <Spinner /> : "run consolidation"}
+          </button>
+        }
+      >
+        <div className="small dim mb">
+          Near-duplicate memories (cosine &gt; 0.92) are merged keeping the higher-importance copy,
+          stale memories decay (half-life 30d, corrections 60d) and are dropped below importance
+          0.25 after 14 days, and users with ≥5 memories get a rolled-up summary. Runs nightly
+          automatically — trigger manually here.
+        </div>
+        {memStats && (
+          <>
+            <div className="row mb" style={{ gap: 8 }}>
+              <Badge tone="dim">{memStats.total} memories</Badge>
+              {Object.entries(memStats.by_kind || {}).map(([k, v]) => (
+                <Badge key={k} tone="purple">{k}: {String(v)}</Badge>
+              ))}
+            </div>
+            {memStats.last_consolidation && (
+              <div className="small dim">
+                last run {timeAgo(memStats.last_consolidation.ts)} — inspected{" "}
+                {memStats.last_consolidation.report.inspected}, deduped{" "}
+                {memStats.last_consolidation.report.deduped}, decayed{" "}
+                {memStats.last_consolidation.report.decayed}, dropped{" "}
+                {memStats.last_consolidation.report.dropped}, summaries{" "}
+                {memStats.last_consolidation.report.summaries}
+              </div>
+            )}
+            {consReport && (
+              <div className="badge b-cyan mt" style={{ display: "block", padding: 8 }}>
+                just now: inspected {consReport.inspected} · deduped {consReport.deduped} ·
+                decayed {consReport.decayed} · dropped {consReport.dropped} ·
+                summaries {consReport.summaries}
+              </div>
+            )}
+          </>
+        )}
+      </Panel>
+
     </>
   );
 }
