@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# Data & secrets
+backend/data/
+data/
+*.db
+*.sqlite3
+.env
+audit-report.json
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+frontend/.env*.local
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

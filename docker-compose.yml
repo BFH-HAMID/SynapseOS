@@ -1,0 +1,62 @@
+name: synapseos
+
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      SYNAPSE_DATA_DIR: /app/data
+      # switch to Postgres/Redis/Qdrant with: docker compose --profile full up
+      SYNAPSE_DB_URL: ${SYNAPSE_DB_URL:-sqlite:////app/data/synapseos.db}
+      SYNAPSE_REDIS_URL: ${SYNAPSE_REDIS_URL:-}
+      SYNAPSE_VECTOR_BACKEND: ${SYNAPSE_VECTOR_BACKEND:-lite}
+      SYNAPSE_QDRANT_URL: http://qdrant:6333
+      SYNAPSE_MODEL_PROVIDER: ${SYNAPSE_MODEL_PROVIDER:-local}
+      SYNAPSE_MODEL_NAME: ${SYNAPSE_MODEL_NAME:-}
+      SYNAPSE_LLM_BASE_URL: ${SYNAPSE_LLM_BASE_URL:-}
+      SYNAPSE_LLM_API_KEY: ${SYNAPSE_LLM_API_KEY:-}
+      SYNAPSE_ADMIN_KEY: ${SYNAPSE_ADMIN_KEY:-}
+      SYNAPSE_API_KEYS: ${SYNAPSE_API_KEYS:-}
+    volumes:
+      - synapse_data:/app/data
+    restart: unless-stopped
+
+  dashboard:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    environment:
+      BACKEND_URL: http://backend:8000
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # ── full profile: production-grade stores ────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["full"]
+    environment:
+      POSTGRES_USER: synapse
+      POSTGRES_PASSWORD: synapse
+      POSTGRES_DB: synapseos
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    profiles: ["full"]
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    profiles: ["full"]
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+
+volumes:
+  synapse_data:
+  pg_data:
+  qdrant_data:
