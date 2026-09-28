@@ -4,10 +4,11 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from synapseos.api.deps import get_db, get_engine, require_api_key, require_admin
+from synapseos.api.deps import admin_actor, get_db, get_engine, require_api_key, require_admin
 from synapseos.db.models import KBVersion, LearnedFact
 from synapseos.engine import SynapseEngine
 from synapseos.schemas import FactIn
+from synapseos.security.trail import record_action
 
 router = APIRouter(prefix="/kb", tags=["knowledge-base"])
 
@@ -34,6 +35,7 @@ def propose_fact(req: FactIn, db: Session = Depends(get_db),
         raise HTTPException(422, "statement required")
     fact = engine.kb.propose_fact(db, req.statement, req.source_interaction_id,
                                   req.evidence, proposed_by="api")
+    record_action(db, "api", "fact.propose", fact.id, {"statement": req.statement[:200]})
     if req.auto_active:
         engine.kb.decide_fact(db, fact.id, approve=True, decided_by="api-admin")
         fact = db.get(LearnedFact, fact.id)
@@ -45,20 +47,24 @@ def propose_fact(req: FactIn, db: Session = Depends(get_db),
 @router.post("/facts/{fact_id}/approve", summary="Approve a learned fact (goes live)",
              dependencies=[Depends(require_admin)])
 def approve_fact(fact_id: int, db: Session = Depends(get_db),
-                 engine: SynapseEngine = Depends(get_engine)):
-    fact = engine.kb.decide_fact(db, fact_id, approve=True)
+                 engine: SynapseEngine = Depends(get_engine),
+                 actor: str = Depends(admin_actor)):
+    fact = engine.kb.decide_fact(db, fact_id, approve=True, decided_by=actor)
     if not fact:
         raise HTTPException(404, "not found")
+    record_action(db, actor, "fact.approve", fact.id, {"statement": fact.statement})
     return {"id": fact.id, "status": fact.status, "version": fact.version}
 
 
 @router.post("/facts/{fact_id}/reject", summary="Reject a learned fact",
              dependencies=[Depends(require_admin)])
 def reject_fact(fact_id: int, db: Session = Depends(get_db),
-                engine: SynapseEngine = Depends(get_engine)):
-    fact = engine.kb.decide_fact(db, fact_id, approve=False)
+                engine: SynapseEngine = Depends(get_engine),
+                actor: str = Depends(admin_actor)):
+    fact = engine.kb.decide_fact(db, fact_id, approve=False, decided_by=actor)
     if not fact:
         raise HTTPException(404, "not found")
+    record_action(db, actor, "fact.reject", fact.id, {"statement": fact.statement})
     return {"id": fact.id, "status": fact.status}
 
 
@@ -75,15 +81,19 @@ def versions(db: Session = Depends(get_db)):
 @router.post("/versions/{version_id}/rollback", summary="Roll back the KB to a version",
              dependencies=[Depends(require_admin)])
 def rollback(version_id: int, db: Session = Depends(get_db),
-             engine: SynapseEngine = Depends(get_engine)):
+             engine: SynapseEngine = Depends(get_engine),
+             actor: str = Depends(admin_actor)):
     v = engine.kb.rollback(db, version_id)
     if not v:
         raise HTTPException(404, "version not found")
+    record_action(db, actor, "kb.rollback", version_id, {"new_version": v.id})
     return {"rolled_back_to": version_id, "new_version": v.id, "label": v.label}
 
 
 @router.post("/resync", summary="Rebuild KB vectors from relational truth",
              dependencies=[Depends(require_admin)])
-def resync(db: Session = Depends(get_db), engine: SynapseEngine = Depends(get_engine)):
+def resync(db: Session = Depends(get_db), engine: SynapseEngine = Depends(get_engine),
+            actor: str = Depends(admin_actor)):
     n = engine.kb.resync(db)
+    record_action(db, actor, "kb.resync", n)
     return {"reindexed": n}

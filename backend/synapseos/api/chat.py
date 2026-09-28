@@ -39,7 +39,10 @@ def _chat(engine, req, attachments):
             db.commit()
         finally:
             db.close()
-    return engine.chat(req.user_id, req.session_id, req.text, attachments)
+    result = engine.chat(req.user_id, req.session_id, req.text, attachments)
+    if result.get("blocked"):
+        raise HTTPException(status_code=400, detail=result)
+    return result
 
 
 @router.post("/upload", summary="Chat with multipart file uploads (image/audio)")

@@ -140,3 +140,26 @@ class SystemState(Base):
     key: Mapped[str] = mapped_column(String(128), primary_key=True)
     value: Mapped[dict] = mapped_column(JSON, default=dict)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class SecurityEvent(Base):
+    """Guard events: flagged / blocked inputs (prompt injection, abuse probes)."""
+    __tablename__ = "security_events"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    category: Mapped[str] = mapped_column(String(64))
+    action: Mapped[str] = mapped_column(String(16))  # flagged | blocked
+    user_ext: Mapped[str] = mapped_column(String(128), default="", index=True)
+    snippet: Mapped[str] = mapped_column(String(300), default="")
+    details: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class AuditLog(Base):
+    """Immutable admin action trail — who approved/rejected/rolled back what, and when."""
+    __tablename__ = "audit_log"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    actor: Mapped[str] = mapped_column(String(128), default="")
+    action: Mapped[str] = mapped_column(String(64))
+    target: Mapped[str] = mapped_column(String(256), default="")
+    details: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)

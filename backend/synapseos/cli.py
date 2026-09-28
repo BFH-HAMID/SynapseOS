@@ -187,7 +187,7 @@ def cmd_stats(args) -> int:
     print(f"  users          {t['users']:<8} documents     {t['documents']}")
     print(f"  facts active   {t['facts_active']:<8} facts pending {t['facts_pending']}")
     print(f"  flagged        {t['flagged']:<8} open reviews  {t['open_reviews']}")
-    print(f"  drift events   {t['drift_events']}")
+    print(f"  drift events   {t['drift_events']:<8} guard events  {t.get('security_events', 0)}")
     print(f"  avg reward     {a['reward']:<8} avg confidence {a['confidence']}")
     print(f"  avg latency    {a['latency_ms']}ms")
     rm = d.get("reward_model", {})
@@ -217,6 +217,50 @@ def cmd_audit(args) -> int:
     report.print()
     print(c(f"  report written to {args.out}", "dim"))
     return 1 if report.high_count > 0 else 0
+
+
+def cmd_export(args) -> int:
+    client = Client(args.url, args.api_key, args.admin_key)
+    stats = client.get(f"/admin/export/stats?min_reward={args.min_reward}").json()
+    print(c(f"◉ Export dataset — {args.kind.upper()}", "cyan"))
+    print(c(f"  available: {json.dumps(stats)}", "dim"))
+    args.out = args.out or f"synapseos-{args.kind}.jsonl"
+    r = client.get(f"/admin/export/{args.kind}?format=jsonl&min_reward={args.min_reward}")
+    if r.status_code != 200:
+        print(c(f"error {r.status_code}: {r.text}", "red"))
+        return 1
+    with open(args.out, "w", encoding="utf-8") as fh:
+        fh.write(r.text)
+    lines = r.text.count("\n") + (1 if r.text.strip() else 0)
+    print(c(f"  ✓ wrote {lines} rows → {args.out}", "green"))
+    return 0
+
+
+def cmd_memory(args) -> int:
+    client = Client(args.url, args.api_key, args.admin_key)
+    if args.action == "stats":
+        print(json.dumps(client.get("/admin/memory/stats").json(), indent=2))
+        return 0
+    if args.action == "consolidate":
+        r = client.post("/admin/memory/consolidate", {}, admin=True)
+        print(json.dumps(r.json(), indent=2) if r.status_code == 200
+              else c(f"error {r.status_code}: {r.text}", "red"))
+        return 0 if r.status_code == 200 else 1
+    print(c("unknown action", "red"))
+    return 1
+
+
+def cmd_search(args) -> int:
+    client = Client(args.url, args.api_key, args.admin_key)
+    r = client.post("/search", {"text": args.text, "top_k": args.top_k})
+    if r.status_code != 200:
+        print(c(f"error {r.status_code}: {r.text}", "red"))
+        return 1
+    for hit in r.json()["results"]:
+        mark = {"document": "▤", "fact": "●", "memory": "◇"}.get(hit["kind"], "·")
+        print(c(f"  {mark} [{hit['kind']:<8}] {hit['score']:+.3f}  {hit['title'][:50]}", "cyan"))
+        print(c(f"      {hit['text'][:110]}", "dim"))
+    return 0
 
 
 def cmd_seed(args) -> int:

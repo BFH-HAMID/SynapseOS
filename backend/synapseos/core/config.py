@@ -64,6 +64,8 @@ class Settings:
     rate_limit_refill: float = 4.0
     max_body_bytes: int = 8 * 1024 * 1024
     docs_enabled: bool = True
+    guard_mode: str = "monitor"          # off | monitor | strict
+    public_url: str = "http://127.0.0.1:8000"
 
     # learning engine knobs
     session_ttl_s: int = 6 * 3600
@@ -103,6 +105,8 @@ class Settings:
             rate_limit_refill=_float_env("SYNAPSE_RATE_LIMIT_REFILL", 4.0),
             max_body_bytes=_int_env("SYNAPSE_MAX_BODY_MB", 8) * 1024 * 1024,
             docs_enabled=_bool_env("SYNAPSE_DOCS", True),
+            guard_mode=(_env("SYNAPSE_GUARD_MODE", "monitor") or "monitor").lower(),
+            public_url=_env("SYNAPSE_PUBLIC_URL", "http://127.0.0.1:8000"),
             session_ttl_s=_int_env("SYNAPSE_SESSION_TTL_S", 6 * 3600),
             review_confidence_threshold=_float_env("SYNAPSE_REVIEW_CONFIDENCE", 0.45),
             exemplar_min_reward=_float_env("SYNAPSE_EXEMPLAR_MIN_REWARD", 0.5),
@@ -138,6 +142,7 @@ class Settings:
             "rate_limit": {"capacity": self.rate_limit_capacity, "refill_per_s": self.rate_limit_refill},
             "max_body_mb": self.max_body_bytes // (1024 * 1024),
             "docs_enabled": self.docs_enabled,
+            "guard_mode": self.guard_mode,
             "review_confidence_threshold": self.review_confidence_threshold,
         }
 

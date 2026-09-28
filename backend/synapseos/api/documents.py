@@ -4,7 +4,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
-from synapseos.api.deps import get_db, get_engine, require_api_key
+from synapseos.api.deps import admin_actor, get_db, get_engine, require_admin, require_api_key
+from synapseos.security.trail import record_action
 from synapseos.db.models import Document
 from synapseos.engine import SynapseEngine
 from synapseos.kb.knowledge_base import chunk_text
@@ -20,6 +21,7 @@ def add_document(req: DocumentIn, db: Session = Depends(get_db),
         raise HTTPException(422, "text required")
     doc = engine.kb.add_document(db, title=req.title, text=req.text, source=req.source,
                                  modality=req.modality, mime=req.mime, meta=req.meta)
+    record_action(db, "api", "document.add", doc.id, {"title": req.title, "modality": req.modality})
     return {"id": doc.id, "title": doc.title, "chunks": len(chunk_text(req.text))}
 
 
@@ -46,6 +48,7 @@ async def upload_document(file: UploadFile = File(...), title: str = Form(""),
         doc = engine.kb.add_document(db, title=title,
                                      text=raw.decode("utf-8", "replace"), source=source,
                                      modality="text", mime=mime)
+    record_action(db, "upload", "document.add", doc.id, {"title": title, "modality": doc.modality})
     return {"id": doc.id, "title": doc.title, "modality": doc.modality}
 
 
@@ -72,7 +75,9 @@ def get_document(doc_id: int, db: Session = Depends(get_db)):
 
 @router.delete("/documents/{doc_id}", summary="Deactivate a document (versioned, reversible)")
 def deactivate_document(doc_id: int, db: Session = Depends(get_db),
-                        engine: SynapseEngine = Depends(get_engine)):
-    if not engine.kb.deactivate_document(db, doc_id):
+                        engine: SynapseEngine = Depends(get_engine),
+                        actor: str = Depends(admin_actor)):
+    if not engine.kb.deactivate_document(db, doc_id, actor=actor):
         raise HTTPException(404, "not found")
+    record_action(db, actor, "document.delete", doc_id)
     return {"id": doc_id, "active": False, "note": "deactivated; restore via KB rollback"}

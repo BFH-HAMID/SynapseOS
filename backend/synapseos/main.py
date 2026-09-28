@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import secrets
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,9 +20,12 @@ from synapseos.api import chat as chat_api
 from synapseos.api import documents as docs_api
 from synapseos.api import kb as kb_api
 from synapseos.api import meta as meta_api
+from synapseos.api import search as search_api
+from synapseos.api import security as security_api
 from synapseos.api import users as users_api
 from synapseos.core.config import get_settings
 from synapseos.core.ratelimit import TokenBucketLimiter
+from synapseos.db.models import SystemState
 from synapseos.engine import build_engine
 
 log = logging.getLogger("synapseos")
@@ -49,6 +54,7 @@ def create_app() -> FastAPI:
     app.state.settings = settings
     app.state.limiter = limiter
     app.state.session_factory = engine.db
+    app.state.internal_token = secrets.token_hex(16)  # self-audit bypasses rate limiting
 
     # ── middleware (order matters: outermost runs first) ──────────────────
     @app.middleware("http")
@@ -59,19 +65,25 @@ def create_app() -> FastAPI:
             resp.headers.setdefault("Referrer-Policy", "no-referrer")
             return resp
 
+        # internal self-audit requests (dashboard-triggered) skip rate limiting;
+        # the token is per-process and never exposed over the API
+        is_internal = (request.headers.get("x-synapse-internal")
+                       == app.state.internal_token)
+
         # body size guard
         cl = request.headers.get("content-length")
         if cl and cl.isdigit() and int(cl) > settings.max_body_bytes:
             return _secure(JSONResponse({"error": "payload too large"}, status_code=413))
         # rate limit
-        key = request.headers.get("x-api-key") or (
-            request.headers.get("authorization") or
-            (request.client.host if request.client else "anon"))
-        allowed, retry = limiter.check(f"{key}")
-        if not allowed:
-            return _secure(JSONResponse({"error": "rate limit exceeded"},
-                                        status_code=429,
-                                        headers={"Retry-After": str(int(retry) + 1)}))
+        if not is_internal:
+            key = request.headers.get("x-api-key") or (
+                request.headers.get("authorization") or
+                (request.client.host if request.client else "anon"))
+            allowed, retry = limiter.check(f"{key}")
+            if not allowed:
+                return _secure(JSONResponse({"error": "rate limit exceeded"},
+                                            status_code=429,
+                                            headers={"Retry-After": str(int(retry) + 1)}))
         response = await call_next(request)
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("X-Frame-Options", "DENY")
@@ -102,6 +114,8 @@ def create_app() -> FastAPI:
     app.include_router(kb_api.router, prefix=API_PREFIX)
     app.include_router(users_api.router, prefix=API_PREFIX)
     app.include_router(admin_api.router, prefix=API_PREFIX)
+    app.include_router(search_api.router, prefix=API_PREFIX)
+    app.include_router(security_api.router, prefix=API_PREFIX)
 
     @app.get("/", tags=["meta"], include_in_schema=False)
     def landing():
@@ -117,6 +131,12 @@ def create_app() -> FastAPI:
                 db = engine.db()
                 try:
                     engine.drift.run_all(db)
+                    # memory "sleep cycle" — at most once every 24h
+                    row = db.get(SystemState, "last_consolidation")
+                    last = row.value.get("ts") if row else None
+                    if not last or (datetime.now(timezone.utc)
+                                    - datetime.fromisoformat(last)).total_seconds() > 86400:
+                        engine.consolidator.consolidate(db, actor="scheduler")
                 finally:
                     db.close()
             except asyncio.CancelledError:

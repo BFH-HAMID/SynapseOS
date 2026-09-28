@@ -55,3 +55,12 @@ class UserIn(BaseModel):
 class ResolveIn(BaseModel):
     decision: str = Field(default="resolved", description="resolved | dismissed")
     note: str = ""
+
+
+class SearchRequest(BaseModel):
+    text: str
+    user_id: Optional[str] = Field(default=None,
+                                   description="scope memory results to this user's profile")
+    kinds: list[str] = Field(default_factory=lambda: ["document", "fact", "memory"],
+                             description="which sources to search")
+    top_k: int = Field(default=8, ge=1, le=50)

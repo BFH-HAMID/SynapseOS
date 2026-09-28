@@ -26,6 +26,7 @@ from synapseos.core.config import Settings
 from synapseos.db.models import (Feedback, Interaction, ReviewItem, User, utcnow)
 from synapseos.embeddings.unified import UnifiedEmbedder
 from synapseos.kb.knowledge_base import KnowledgeBase
+from synapseos.learning.consolidator import MemoryConsolidator
 from synapseos.learning.drift import DriftMonitor, QUERY_COLLECTION
 from synapseos.learning.personalization import Personalization
 from synapseos.learning.reward import RewardModel
@@ -36,6 +37,9 @@ from synapseos.memory.short_term import build_session_cache
 from synapseos.models.base import GenRequest
 from synapseos.models.local_synth import words, STOP
 from synapseos.rag.retriever import INTERACTIONS_COLLECTION, Retriever
+from synapseos.security.guard import InputGuard
+from synapseos.security.trail import record_action
+from synapseos.db.models import SecurityEvent
 from synapseos.vectors.lite_store import VectorStore
 
 REMEMBER_PREFIX = "remember that "
@@ -46,7 +50,9 @@ class SynapseEngine:
     def __init__(self, settings: Settings, session_factory, store: VectorStore,
                  embedder: UnifiedEmbedder, llm, retriever: Retriever,
                  long_term: LongTermMemory, kb: KnowledgeBase, reward: RewardModel,
-                 critic: SelfCritic, drift: DriftMonitor):
+                 critic: SelfCritic, drift: DriftMonitor,
+                 guard: InputGuard | None = None,
+                 consolidator: MemoryConsolidator | None = None):
         self.settings = settings
         self.sessions = build_session_cache(settings)
         self.db = session_factory
@@ -59,6 +65,8 @@ class SynapseEngine:
         self.reward = reward
         self.critic = critic
         self.drift = drift
+        self.guard = guard or InputGuard("off")
+        self.consolidator = consolidator
 
     # ───────────────────────────── chat ───────────────────────────────────
     def chat(self, user_ext_id: str, session_id: str, text: str,
@@ -93,6 +101,24 @@ class SynapseEngine:
                                       item.native_vector, {"modality": item.modality,
                                                           "text_repr": item.text_repr[:200]})
             effective_query = " ".join(p for p in caption_parts if p).strip()
+
+            # 1b) input guard — prompt-injection / abuse detection
+            guard_result = self.guard.check(effective_query)
+            if guard_result.blocked:
+                db.add(SecurityEvent(category=guard_result.matched[0]["category"],
+                                     action="blocked", user_ext=user.ext_id,
+                                     snippet=effective_query[:280],
+                                     details={"matched": guard_result.matched}))
+                record_action(db, user.ext_id, "guard.block", "chat",
+                              {"reasons": guard_result.reasons})
+                db.commit()
+                return {"blocked": True, "reasons": guard_result.reasons,
+                        "guard_mode": guard_result.mode, "interaction_id": None}
+            if guard_result.flagged:
+                db.add(SecurityEvent(category=guard_result.matched[0]["category"],
+                                     action="flagged", user_ext=user.ext_id,
+                                     snippet=effective_query[:280],
+                                     details={"matched": guard_result.matched}))
 
             # 2) adaptive retrieval
             topic = classify(effective_query)
@@ -132,7 +158,11 @@ class SynapseEngine:
             flagged = critique["verdict"] == "review"
 
             # 6) structured logging (the feedback-ingestion ledger row)
-            trace = self._build_trace(effective_query, topic, retrieval, style, bias, gen, critique)
+            trace = [{"step": "input_guard",
+                      "detail": {"mode": guard_result.mode,
+                                 "flagged": guard_result.flagged,
+                                 "matched": guard_result.matched[:3]}}]
+            trace += self._build_trace(effective_query, topic, retrieval, style, bias, gen, critique)
             explanation = {
                 "confidence": critique["confidence"],
                 "verdict": critique["verdict"],
@@ -178,10 +208,26 @@ class SynapseEngine:
             self.sessions.append(f"s{user.id}:{session_id}",
                                  {"role": "assistant", "content": gen.text[:600]})
 
-            return self._interaction_payload(db, inter, user, extra={
+            # related-question suggestions from past interactions
+            suggestions: list[str] = []
+            for h in self.store.search(INTERACTIONS_COLLECTION, embedded.vector, top_k=8):
+                m = h["meta"]
+                if m.get("interaction_id") == inter.id or m.get("kind") != "chat":
+                    continue
+                q = (m.get("question") or "").strip()
+                if (q and h["score"] > 0.2
+                        and q.lower() != (text or "").strip().lower()
+                        and q not in suggestions):
+                    suggestions.append(q)
+                if len(suggestions) >= 3:
+                    break
+
+            payload = self._interaction_payload(db, inter, user, extra={
                 "degraded": gen.degraded, "usage": gen.usage,
                 "exemplars_used": len(retrieval.exemplars),
             })
+            payload["suggestions"] = suggestions
+            return payload
         finally:
             db.close()
 
@@ -304,6 +350,12 @@ def build_engine(settings: Settings) -> SynapseEngine:
     from synapseos.rag.retriever import Retriever as _R
     from synapseos.vectors.lite_store import build_store
 
+    def _IG(mode: str) -> InputGuard:
+        return InputGuard(mode)
+
+    def _MC(vs, embed) -> MemoryConsolidator:
+        return MemoryConsolidator(vs, embed)
+
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     db_engine = _db_engine(settings)
     init_db(db_engine)
@@ -320,5 +372,7 @@ def build_engine(settings: Settings) -> SynapseEngine:
     critic = _SC(settings.review_confidence_threshold)
     drift = _DM(store, psi_threshold=settings.drift_psi_threshold,
                 reward_drop=settings.drift_reward_drop)
+    guard = _IG(settings.guard_mode)
+    consolidator = _MC(store, unified.text)
     return SynapseEngine(settings, session_factory, store, unified, llm, retriever,
-                         long_term, kb, reward, critic, drift)
+                         long_term, kb, reward, critic, drift, guard, consolidator)

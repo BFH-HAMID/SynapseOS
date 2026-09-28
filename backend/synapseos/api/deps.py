@@ -46,3 +46,10 @@ def require_admin(request: Request,
     key = _extract_key(request, x_api_key, authorization)
     if not key or key != settings.admin_key:
         raise HTTPException(status_code=403, detail="admin key required")
+
+
+def admin_actor() -> str:
+    """Identity recorded in the audit trail for privileged actions.
+    (The key itself is a secret — never logged.)"""
+    settings = get_settings()
+    return "admin" if settings.admin_auth_enabled else "dev-admin"

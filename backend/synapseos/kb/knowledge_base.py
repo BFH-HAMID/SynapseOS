@@ -167,7 +167,7 @@ class KnowledgeBase:
         return self._snapshot(db, label=f"rollback to version {version_id}",
                               note=f"rolled back by {by}", created_by=by)
 
-    def resync(self, db: Session) -> int:
+    def resync(self, db: Session, actor: str = "api") -> int:
         """Rebuild the kb vector collection from relational truth (docs + active facts)."""
         self.store.delete_collection(KB_COLLECTION)
         n = 0
@@ -182,4 +182,6 @@ class KnowledgeBase:
                               {"kind": "fact", "fact_id": f.id, "text": f.statement,
                                "version": f.version})
             n += 1
+        record_action(db, actor, "kb.resync", "kb", {"reindexed": n})
+        db.commit()
         return n
